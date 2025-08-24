@@ -1,20 +1,4 @@
 import { mapSnake, gameSegments } from "./mapSnake";
-import { preventControlButtons} from "../components/BusinessLogic";
-
-export type Replay = {
-  events: Array <{
-    index: number;
-    type: 'direction';
-    direction: 'UP' | 'LEFT' | 'RIGHT' | 'DOWN';
-  } | {
-    index: number;
-    type: 'food' | keyof typeof gameSegments.superFood;
-    x: number;
-    y: number;
-  }>
-  difficulty: keyof typeof difficulties,
-  score: number;
-} | null
 
 export const difficulties = {
   1: { speed: 208, multiplier: 3 },
@@ -31,6 +15,14 @@ const generateGridCoordinates = (gridWidth: number, gridHeight: number) => {
   }
   return coordinates;
 };
+
+interface GameOptions {
+    gameCanvas: HTMLCanvasElement;
+    foodCanvas: HTMLCanvasElement;
+    setScore: (score: number) => void;
+    setSuperFood: (food: { count: number; visible: boolean }) => void;
+    setGameOver: (isOver: boolean) => void;
+}
 
 export class SnakeGame {
   canvas: HTMLCanvasElement;
@@ -57,24 +49,23 @@ export class SnakeGame {
   eatenFoodCount: number;
   smallSquareCount: number;
   smallSquareSize: number;
-  replay: Replay;
-  isReplay: boolean;
   tick: number;
   isAboutToDie: boolean;
-  setUserReplay: (replay: Replay) => void;
-  setCurrentReplayId: (valuer: number | null) => void
 
-  constructor({
-    setUserReplay,
-    setCurrentReplayId
-  } : {
-    setUserReplay: (replay: Replay) => void,
-    setCurrentReplayId: (valuer: number | null) => void,
-  }) {
-    this.canvas = document.getElementById("game-canvas") as HTMLCanvasElement;
+  setScore: (score: number) => void;
+  setSuperFood: (food: { count: number; visible: boolean }) => void;
+  setGameOver: (isOver: boolean) => void;
+
+  constructor({ gameCanvas, foodCanvas, setScore, setSuperFood, setGameOver }: GameOptions) {
+    this.canvas = gameCanvas;
     this.ctx = this.canvas.getContext("2d")!;
-    this.foodCanvas = document.getElementById("superfood-canvas") as HTMLCanvasElement;
+    this.foodCanvas = foodCanvas;
     this.foodCtx = this.foodCanvas.getContext("2d")!;
+
+    this.setScore = setScore;
+    this.setSuperFood = setSuperFood;
+    this.setGameOver = setGameOver;
+
     this.tileSize = 16;
     this.gridHeight = 10;
     this.gridWidth = 19;
@@ -88,7 +79,6 @@ export class SnakeGame {
     this.eatenFood = [];
     this.score = 0;
     this.gameOver = true;
-    this.isReplay = false;
     this.difficulty = 3;
     this.smallSquareCount = 4;
     this.smallSquareSize = 4;
@@ -96,43 +86,26 @@ export class SnakeGame {
       this.gridWidth,
       this.gridHeight,
     );
-    this.replay = null;
     this.tick = 0;
     this.isAboutToDie = false;
-    this.setUserReplay = setUserReplay;
-    this.setCurrentReplayId = setCurrentReplayId;
+
     this.resizeCanvas();
     this.redraw();
-    window.addEventListener("resize", this.resizeCanvas.bind(this));
+
     document.addEventListener("keydown", this.changeDirection.bind(this));
   }
 
-  startGame() {
-    this.replay = {
-      difficulty: this.difficulty,
-      score: 0,
-      events: []
-    }
-    this.changeScore(0);
-    this.gameOver = false;
-    this.gameLoop();
+  destroy() {
+    document.removeEventListener("keydown", this.changeDirection.bind(this));
+    // Set gameOver to true to stop any running game loops
+    this.gameOver = true;
   }
 
-  playReplay(replay: Replay) {
-    this.clearCanvas()
-    this.snake = this.createInitialSnake(5);
-    this.directionQueue = ["RIGHT"];
-    this.eatenFood = [];
-    this.eatenFoodCount = 0;
-    this.superFood = null;
-    this.superFoodCount = 0;
-    this.food = { x: 16, y: 2 };
-    this.isReplay = true;
-    this.gameOver = false;
-    this.replay = {...replay!};
+  startGame() {
     this.changeScore(0);
-    if (!this.tick) this.replayLoop();
-    this.tick = 0;
+    this.gameOver = false;
+    this.setGameOver(false);
+    this.gameLoop();
   }
 
   createInitialSnake(length: number) {
@@ -144,16 +117,13 @@ export class SnakeGame {
   }
 
   resizeCanvas() {
-    const gameArea = document.getElementById("game-area");
-    const superfoodArea = document.getElementById("superfood-area");
-
-    const gameRect = gameArea!.getBoundingClientRect();
+    const gameRect = this.canvas.parentElement!.getBoundingClientRect();
     this.canvas.width = gameRect.width * this.scale;
     this.canvas.height = gameRect.height * this.scale;
     this.canvas.style.width = `${gameRect.width}px`;
     this.canvas.style.height = `${gameRect.height}px`;
 
-    const foodRect = superfoodArea!.getBoundingClientRect();
+    const foodRect = this.foodCanvas.parentElement!.getBoundingClientRect();
     this.foodCanvas.width = foodRect.width * this.scale;
     this.foodCanvas.height = foodRect.height * this.scale;
     this.foodCanvas.style.width = `${foodRect.width}px`;
@@ -190,12 +160,7 @@ export class SnakeGame {
     const foodPosition =
       freeSegments[Math.floor(Math.random() * freeSegments.length)];
 
-    if (!this.isReplay) {
-      this.food = foodPosition;
-      this.replay!.events.push({index: this.tick + 1, type: "food", ...foodPosition})
-    } else {
-      this.food = {x: 99, y: 99}
-    }
+    this.food = foodPosition;
 
     if (this.eatenFoodCount === 5) {
       let superFoodFreeSegments: { x: number, y:number }[][] = []
@@ -221,24 +186,17 @@ export class SnakeGame {
       const superFoodSegments = superFoodFreeSegments[Math.floor(Math.random() * superFoodFreeSegments.length)];
       const superFoodType = Object.keys(gameSegments.superFood)[Math.floor(Math.random() * 5)] as keyof typeof gameSegments.superFood;
 
-      if (!this.isReplay) {
-        this.replay!.events.push({index: this.tick + 1, type: superFoodType, ...superFoodSegments[0]})
-        this.superFood = {
-          segments: superFoodSegments,
-          type: superFoodType
-        };
-        this.superFoodCount = 20;
-        this.eatenFoodCount = 0;
-      } else {
-        this.superFood = null;
-      }
+      this.superFood = {
+        segments: superFoodSegments,
+        type: superFoodType
+      };
+      this.superFoodCount = 20;
+      this.eatenFoodCount = 0;
     }
   }
 
   changeDirection(event: KeyboardEvent) {
-    if (this.gameOver || this.isReplay) return;
-
-    window.addEventListener("keydown", preventControlButtons, false);
+    if (this.gameOver) return;
 
     const code = event.code;
     const lastDirection = this.directionQueue[this.directionQueue.length - 1];
@@ -260,37 +218,6 @@ export class SnakeGame {
     }
   }
 
-  replayLoop() {
-    setTimeout(() => {
-      if (this.isReplay && !this.gameOver) {
-        const replayEvents = this.replay!.events.filter(({index}) => index === this.tick)
-        replayEvents.forEach((event) => {
-          if (event.type === "direction") {
-            this.directionQueue = [event.direction]
-          } else if (event.type === "food") {
-            this.food = {x: event.x, y: event.y};
-          } else {
-            this.superFood = {
-              segments: [
-                {x: event.x, y: event.y},
-                {x: event.x + 1, y: event.y},
-              ],
-              type: event.type,
-            }
-            this.superFoodCount = 19;
-            this.eatenFoodCount = 0
-          }
-        })
-        this.moveSnake();
-        this.countdownSuperFood();
-        this.redraw();
-        this.checkGameOver();
-        this.tick++
-        this.replayLoop();
-      }
-    }, difficulties[this.replay!.difficulty].speed);
-  }
-
   gameLoop() {
     setTimeout(() => {
       if (!this.gameOver) {
@@ -306,15 +233,12 @@ export class SnakeGame {
 
   countdownSuperFood() {
     if (!this.superFoodCount) {
-      this.superFood = null;
-      document.querySelector(".countdown")!.classList.add("hidden");
-      return;
+        this.superFood = null;
+        this.setSuperFood({ count: 0, visible: false });
+        return;
     }
 
-    document.getElementById("countdown")!.innerText =
-      this.superFoodCount.toString();
-    document.querySelector(".countdown")!.classList.remove("hidden");
-
+    this.setSuperFood({ count: this.superFoodCount, visible: true });
     this.superFoodCount--;
   }
 
@@ -362,9 +286,6 @@ export class SnakeGame {
     ) && !this.isAboutToDie)) {
         this.isAboutToDie = true;
         if (this.directionQueue.length > 1) {
-          if (!this.isReplay) {
-            this.replay!.events.push({ index: this.tick + 1, type: 'direction', direction: this.directionQueue[1]})
-          }
           this.directionQueue.shift();
         }
         return;
@@ -396,43 +317,25 @@ export class SnakeGame {
       this.eatenFood.unshift({ ...this.food });
       this.eatenFoodCount++;
       this.generateFood();
-      if (this.isReplay) {
-        this.changeScore(this.score + difficulties[this.replay!.difficulty].multiplier);
-      } else {
-        this.changeScore(this.score + difficulties[this.difficulty].multiplier);
-      }
+      this.changeScore(this.score + difficulties[this.difficulty].multiplier);
     } else if (this.superFood && this.superFood.segments.some(({x, y}) => head.x === x && head.y === y)) {
       this.eatenFood.unshift({ ...head });
       this.eatenFoodCount = 0;
       this.superFood = null;
       this.superFoodCount = 0;
-      if (this.isReplay) {
-        this.changeScore(
-          this.score + 5 * difficulties[this.replay!.difficulty].multiplier,
-        );
-      } else {
-        this.changeScore(
-          this.score + 5 * difficulties[this.difficulty].multiplier,
-        );
-      }
+      this.changeScore(this.score + 5 * difficulties[this.difficulty].multiplier);
     } else {
       this.snake.pop();
     }
 
     if (this.directionQueue.length > 1) {
-      if (!this.isReplay) {
-        this.replay!.events.push({ index: this.tick + 1, type: 'direction', direction: this.directionQueue[1]})
-      }
       this.directionQueue.shift();
     }
   }
 
   changeScore(score: number) {
-    document.getElementById("score")!.innerText = score
-      .toString()
-      .padStart(4, "0");
     this.score = score;
-    this.replay!.score = score;
+    this.setScore(score);
   }
 
   drawSnake() {
@@ -446,42 +349,6 @@ export class SnakeGame {
     }).forEach(({ x, y, segment }) => {
       this.drawSegment(segment, { x, y });
     });
-  }
-
-  drawDebugGrid() {
-    this.ctx.strokeStyle = "#000";
-    this.ctx.lineWidth = 1;
-    for (let i = 1; i < this.gridWidth; i++) {
-      this.ctx.moveTo(i * this.tileSize, 0);
-      this.ctx.lineTo(i * this.tileSize, this.gridHeight * this.tileSize);
-      this.ctx.stroke();
-    }
-    for (let i = 1; i < this.gridHeight; i++) {
-      this.ctx.moveTo(0, i * this.tileSize);
-      this.ctx.lineTo(this.gridWidth * this.tileSize, i * this.tileSize);
-      this.ctx.stroke();
-    }
-  }
-
-  drawGrid() {
-    this.ctx.strokeStyle = "#73a582";
-    this.ctx.lineWidth = 0.33;
-
-    for (let i = 1; i < this.gridWidth * this.smallSquareCount; i++) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(i * this.smallSquareSize, 0);
-      this.ctx.lineTo(
-        i * this.smallSquareSize,
-        this.gridHeight * this.tileSize,
-      );
-      this.ctx.stroke();
-    }
-    for (let i = 1; i < this.gridHeight * this.smallSquareCount; i++) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, i * this.smallSquareSize);
-      this.ctx.lineTo(this.gridWidth * this.tileSize, i * this.smallSquareSize);
-      this.ctx.stroke();
-    }
   }
 
   drawSegment(gameSegment: number[][], segment: { x: number; y: number }, ctx = this.ctx) {
@@ -555,10 +422,7 @@ export class SnakeGame {
   }
 
   resetGame() {
-    document.querySelector(".game-start-screen")!.classList.remove("hidden");
-    document.querySelector(".countdown")!.classList.add("hidden");
-    if (this.replay && !this.isReplay) this.setUserReplay(this.replay);
-    this.setCurrentReplayId(null),
+    this.setGameOver(true);
     this.snake = this.createInitialSnake(5);
     this.directionQueue = ["RIGHT"];
     this.eatenFood = [];
@@ -566,7 +430,6 @@ export class SnakeGame {
     this.superFood = null;
     this.superFoodCount = 0;
     this.tick = 0;
-    this.isReplay = false;
     this.food = { x: 16, y: 2 };
     this.redraw();
   }
